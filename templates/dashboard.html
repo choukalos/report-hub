@@ -13,7 +13,7 @@
 {% for card in cards %}
 <div class="card">
   {% if card.type == 'label' %}
-    <h{{ card.level }}>{{ card.title }}{% if card.value is defined and card.value %} <span class="kpi">{{ card.value }}</span>{% endif %}</h{{ card.level }}>
+    <h{{ card.level }}>{{ card.title }}{% if card.value is defined and card.value %} <span class="kpi">{{ card.value }}</span>{% endif %}{% if card.delta is defined and card.delta %} <span class="delta {{ card.delta_class }}">{% if card.delta_arrow %}{{ card.delta_arrow }} {{ card.delta }}{% else %}{{ card.delta }}{% endif %}{% if card.delta_label %} <span class="delta-label">{{ card.delta_label }}</span>{% endif %}</span>{% endif %}</h{{ card.level }}>
     {% if card.text %}<div class="label-text">{{ card.text }}</div>{% endif %}
   {% elif card.type == 'table' %}
     <h3 class="card-title">{{ card.title }}</h3>

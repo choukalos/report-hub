@@ -1,3 +1,4 @@
+import datetime
 import json
 import math
 import os
@@ -44,6 +45,12 @@ def _fmt(value, fmt):
     """Format a cell value for display (cents-based money, etc.)."""
     if value is None:
         return "—"
+    if fmt == "date":
+        if isinstance(value, datetime.datetime):
+            return value.strftime("%Y-%m-%d %H:%M")
+        if isinstance(value, datetime.date):
+            return value.isoformat()
+        return str(value)
     try:
         if fmt == "currency":
             v = int(value) / 100
@@ -84,20 +91,39 @@ def _render_card(card: dict, page: int) -> dict:
     out["config"] = cfg
 
     if card["type"] == "label":
-        out["level"] = int(cfg.get("level", 3))
+        out["level"] = max(1, min(4, int(cfg.get("level", 3))))
         out["text"] = cfg.get("text", "")
         if cfg.get("value_query"):
             res = query_engine.run_preview(cfg["value_query"], limit=1)
             if res["rows"]:
                 out["value"] = _fmt(res["rows"][0][res["columns"][0]], cfg.get("format", "text"))
+        if cfg.get("delta_query"):
+            dres = query_engine.run_preview(cfg["delta_query"], limit=1)
+            if dres["rows"]:
+                raw = dres["rows"][0][dres["columns"][0]]
+                if raw is not None:
+                    out["delta"] = _fmt(raw, cfg.get("delta_format") or cfg.get("format", "text"))
+                    out["delta_label"] = cfg.get("delta_label", "")
+                    try:
+                        num = float(raw)
+                    except (TypeError, ValueError):
+                        num = None
+                    if num is None:
+                        out["delta_class"], out["delta_arrow"] = "neutral", ""
+                    elif num == 0:
+                        out["delta_class"], out["delta_arrow"] = "neutral", "±"
+                    else:
+                        good_is_down = cfg.get("delta_good", "down") == "down"
+                        is_good = (num < 0) if good_is_down else (num > 0)
+                        out["delta_class"] = "good" if is_good else "bad"
+                        out["delta_arrow"] = "↑" if num > 0 else "↓"
         return out
 
-    if not card.get("query_id"):
-        raise ValueError("card has no query_id")
-    sql = _query_sql(card["query_id"])
-
     if card["type"] == "table":
-        page_size = min(int(cfg.get("page_size", config.DEFAULT_PAGE_SIZE)), config.MAX_PAGE_SIZE)
+        if not card.get("query_id"):
+            raise ValueError("table card has no query_id")
+        sql = _query_sql(card["query_id"])
+        page_size = max(1, min(int(cfg.get("page_size", config.DEFAULT_PAGE_SIZE)), config.MAX_PAGE_SIZE))
         res = query_engine.run_query(sql, page=page, page_size=page_size)
         out.update(
             columns=res["columns"],
@@ -115,7 +141,9 @@ def _render_card(card: dict, page: int) -> dict:
         option = cfg.get("option")
         if not option:
             raise ValueError("chart card missing config.option (ECharts option)")
-        out["option_json"] = json.dumps(option)
+        # Data is self-contained in the option (query_id is optional provenance).
+        # Escape "</" so a "</script>" inside the option JSON cannot break out of the tag.
+        out["option_json"] = json.dumps(option).replace("</", "<\\/")
         return out
 
     raise ValueError(f"unknown card type: {card['type']}")

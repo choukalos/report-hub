@@ -30,6 +30,11 @@ h1 { margin: .4rem 0 .2rem; font-size: 1.5rem; }
 .card h1, .card h2, .card h3 { margin: 0 0 .5rem; }
 .card-title { font-size: 1rem; }
 .kpi { color: var(--accent); font-size: 1.15em; margin-left: .5rem; }
+.delta { font-size: .8em; margin-left: .5rem; font-weight: 600; white-space: nowrap; }
+.delta.good { color: #2f855a; }
+.delta.bad { color: #c53030; }
+.delta.neutral { color: var(--muted); font-weight: 400; }
+.delta-label { color: var(--muted); font-weight: 400; font-size: .9em; }
 .label-text { color: var(--muted); }
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: .9rem; }

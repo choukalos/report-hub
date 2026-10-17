@@ -30,11 +30,14 @@ CREATE TABLE IF NOT EXISTS dashboards (
 
 -- Card types:
 --   label: config = {"level": 1-4, "text": "...", "value_query": "SELECT ...",
---                            "format": "currency|number|percent|text"}
+--                            "format": "currency|date|number|percent|text",
+--                            "delta_query": "SELECT ...", "delta_format": "...",
+--                            "delta_label": "MoM", "delta_good": "down|up"}
 --   table: config = {"page_size": 250, "formats": {"col": "currency|date|number|text"},
 --                            "hide": ["col"]}
 --   chart: config = {"chart": "bar|column|pie", "option": {<full ECharts option>}}
 -- Legend show/hide, series names/colors/visibility live inside the ECharts option.
+-- Chart data is self-contained in the option (query_id is optional provenance).
 CREATE TABLE IF NOT EXISTS cards (
   id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   dashboard_id  INT UNSIGNED NOT NULL,

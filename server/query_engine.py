@@ -3,6 +3,7 @@
 Enforces the read-only contract:
   - single SELECT/WITH statements only (no multi-statement, no DDL/DML)
   - no INTO OUTFILE/INFILE, LOAD_FILE, SLEEP, BENCHMARK, or system schemas
+  - no locking reads (FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE)
   - statement timeout (MAX_EXECUTION_TIME)
   - hard row caps (250/page default, 1000 max; 500 for preview)
 
@@ -19,7 +20,9 @@ from . import config
 _ALLOWED_START = re.compile(r"^\s*(select|with)\b", re.I)
 _FORBIDDEN = re.compile(
     r"\b(into\s+(out|in)file|load_file\s*\(|sleep\s*\(|benchmark\s*\()"
-    r"|(information_schema|performance_schema|mysql\.|sys\.)",
+    r"|(information_schema|performance_schema|mysql\.|sys\.)"
+    r"|\bfor\s+(update|share)\b"
+    r"|\block\s+in\s+share\s+mode\b",
     re.I,
 )
 _MULTI_STATEMENT = re.compile(r";\s*\S")
@@ -99,7 +102,7 @@ def run_preview(sql: str, limit: int = config.PREVIEW_LIMIT):
     conn = _connect()
     try:
         cur = conn.cursor(dictionary=True)
-        cur.execute(f"SELECT * FROM ({base}) AS _t LIMIT %s", (min(limit, 5000),))
+        cur.execute(f"SELECT * FROM ({base}) AS _t LIMIT %s", (min(limit, config.PREVIEW_LIMIT),))
         rows = cur.fetchall()
         columns = [d[0] for d in cur.description]
         return {"columns": columns, "rows": rows}
