@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ dash.title }} — report-hub{% endblock %}
+{% block nav %}
+  <a href="/">dashboards</a> · <a href="/d/{{ dash.slug }}">{{ dash.title }}</a>
+{% endblock %}
+{% block head %}
+  <script src="/static/echarts.min.js"></script>
+{% endblock %}
+{% block content %}
+<h1>{{ dash.title }}</h1>
+{% if dash.description %}<p class="muted">{{ dash.description }}</p>{% endif %}
+
+{% for card in cards %}
+<div class="card">
+  {% if card.type == 'label' %}
+    <h{{ card.level }}>{{ card.title }}{% if card.value is defined and card.value %} <span class="kpi">{{ card.value }}</span>{% endif %}</h{{ card.level }}>
+    {% if card.text %}<div class="label-text">{{ card.text }}</div>{% endif %}
+  {% elif card.type == 'table' %}
+    <h3 class="card-title">{{ card.title }}</h3>
+    {% if card.rows %}
+    <div class="table-wrap">
+    <table>
+      <thead><tr>{% for col in card.columns %}{% if col not in card.hide %}<th>{{ col }}</th>{% endif %}{% endfor %}</tr></thead>
+      <tbody>
+      {% for row in card.rows %}
+        <tr>{% for col in card.columns %}{% if col not in card.hide %}<td>{{ fmt(row[col], card.formats.get(col, 'text')) }}</td>{% endif %}{% endfor %}</tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="pager">
+      {% if card.page > 1 %}<a href="?page={{ card.page - 1 }}">‹ prev</a>{% endif %}
+      <span class="muted">page {{ card.page }} / {{ card.pages }} · {{ card.total }} rows</span>
+      {% if card.page < card.pages %}<a href="?page={{ card.page + 1 }}">next ›</a>{% endif %}
+    </div>
+    {% else %}<p class="muted">no rows</p>{% endif %}
+  {% elif card.type == 'chart' %}
+    <h3 class="card-title">{{ card.title }}</h3>
+    <div id="chart-{{ card.id }}" class="chart"></div>
+    <script>
+      (function () {
+        var el = document.getElementById('chart-{{ card.id }}');
+        var chart = echarts.init(el);
+        chart.setOption({{ card.option_json | safe }});
+        window.addEventListener('resize', function () { chart.resize(); });
+      })();
+    </script>
+  {% elif card.type == 'error' %}
+    <h3 class="card-title">{{ card.title }}</h3>
+    <div class="error">{{ card.error }}</div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}report-hub — dashboards{% endblock %}
+{% block content %}
+<h1>Dashboards</h1>
+{% if dashboards %}
+<ul class="dash-list">
+  {% for d in dashboards %}
+  <li>
+    <a href="/d/{{ d.slug }}"><strong>{{ d.title }}</strong></a>
+    {% if d.description %}<div class="muted">{{ d.description }}</div>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No dashboards published yet. Dashboards are created by the AI
+(inserts into <code>reports.dashboards</code> / <code>reports.cards</code>);
+this UI is strictly read-only.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,1 @@
+"""report-hub server package (read-only reporting UI)."""
