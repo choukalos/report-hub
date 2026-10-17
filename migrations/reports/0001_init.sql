@@ -2,7 +2,8 @@
 -- READ-ONLY CONTRACT: the report-hub UI performs NO writes to this schema.
 -- All inserts/updates/deletes here are done by the AI (direct SQL or via
 -- tooling). See report-hub README.md.
--- Convention: no semicolons inside string literals (runner splits on ';').
+-- Convention: no semicolons inside string literals (runner splits on the
+-- semicolon character).
 
 CREATE TABLE IF NOT EXISTS queries (
   id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
