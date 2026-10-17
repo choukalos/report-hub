@@ -3,6 +3,7 @@ import datetime
 import json
 import math
 import os
+import sys
 import time
 from contextlib import asynccontextmanager
 
@@ -282,6 +283,7 @@ def _render_card(card: dict, page: int, request_params: dict | None = None) -> d
             pages=math.ceil(res["total"] / res["page_size"]) if res["total"] else 1,
             formats=cfg.get("formats", {}),
             hide=set(cfg.get("hide", [])),
+            links=cfg.get("links", {}),
         )
         return out
 
@@ -352,6 +354,37 @@ def dashboard(slug: str, page: int = 1, request: Request = None):
     # pager links so params survive pagination.
     request_params = {k: v for k, v in (request.query_params.items() if request else []) if k != "page"}
 
+    # Param nav (e.g. the category drill-down selector): the dashboard's
+    # ``layout`` JSON may declare ``param_nav: {param, label, all_label,
+    # query}`` — the query (run read-only) lists the selectable values for
+    # that request param; the template renders a dropdown.
+    param_nav = None
+    layout = dash.get("layout")
+    if isinstance(layout, str):
+        try:
+            layout = json.loads(layout)
+        except (TypeError, ValueError):
+            layout = None
+    nav = (layout or {}).get("param_nav") if isinstance(layout, dict) else None
+    if isinstance(nav, dict) and nav.get("param") and nav.get("query"):
+        try:
+            res = query_engine.run_preview(nav["query"], limit=200)
+            col = res["columns"][0]
+            values = [r[col] for r in res["rows"] if r.get(col) is not None]
+            current = request_params.get(nav["param"]) or ""
+            if current and current not in values:
+                values = [current] + values
+            param_nav = {
+                "param": nav["param"],
+                "label": nav.get("label") or nav["param"],
+                "all_label": nav.get("all_label") or "(default)",
+                "values": values,
+                "current": current,
+            }
+        except Exception as e:  # nav is cosmetic — never kill the page
+            param_nav = None
+            print(f"param_nav failed for {slug}: {e}", file=sys.stderr)
+
     rendered = []
     for card in cards:
         try:
@@ -361,7 +394,8 @@ def dashboard(slug: str, page: int = 1, request: Request = None):
                 {"id": card["id"], "type": "error", "title": card.get("title") or "card", "error": str(e)}
             )
     return jinja.get_template("dashboard.html").render(
-        dash=dash, cards=rendered, page=page, fmt=_fmt, params=request_params
+        dash=dash, cards=rendered, page=page, fmt=_fmt, params=request_params,
+        param_nav=param_nav,
     )
 
 

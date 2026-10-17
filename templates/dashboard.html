@@ -10,6 +10,19 @@
 <h1>{{ dash.title }}</h1>
 {% if dash.description %}<p class="muted">{{ dash.description }}</p>{% endif %}
 
+{% if param_nav %}
+<div class="param-nav">
+  <label for="param-select">{{ param_nav.label }}:</label>
+  <select id="param-select" onchange="if (this.value) location.href = '/d/{{ dash.slug }}?{{ param_nav.param }}=' + encodeURIComponent(this.value); else location.href = '/d/{{ dash.slug }}';">
+    <option value="">{{ param_nav.all_label }}</option>
+    {% for v in param_nav['values'] %}
+    <option value="{{ v }}"{% if v == param_nav.current %} selected{% endif %}>{{ v }}</option>
+    {% endfor %}
+  </select>
+  {% if param_nav.current %}<span class="muted">showing: <strong>{{ param_nav.current }}</strong> · <a href="/d/{{ dash.slug }}">reset</a></span>{% endif %}
+</div>
+{% endif %}
+
 {% for card in cards %}
 <div class="card">
   {% if card.type == 'label' %}
@@ -23,7 +36,7 @@
       <thead><tr>{% for col in card.columns %}{% if col not in card.hide %}<th>{{ col }}</th>{% endif %}{% endfor %}</tr></thead>
       <tbody>
       {% for row in card.rows %}
-        <tr>{% for col in card.columns %}{% if col not in card.hide %}<td>{{ fmt(row[col], card.formats.get(col, 'text')) }}</td>{% endif %}{% endfor %}</tr>
+        <tr>{% for col in card.columns %}{% if col not in card.hide %}{% if col in card.links %}<td><a class="drill" href="?{{ card.links[col] }}={{ row[col] | urlencode }}">{{ fmt(row[col], card.formats.get(col, 'text')) }}</a></td>{% else %}<td>{{ fmt(row[col], card.formats.get(col, 'text')) }}</td>{% endif %}{% endif %}{% endfor %}</tr>
       {% endfor %}
       </tbody>
     </table>
