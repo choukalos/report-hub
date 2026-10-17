@@ -29,9 +29,10 @@
     </table>
     </div>
     <div class="pager">
-      {% if card.page > 1 %}<a href="?page={{ card.page - 1 }}">‹ prev</a>{% endif %}
+      {% set qs = params | urlencode %}
+      {% if card.page > 1 %}<a href="?page={{ card.page - 1 }}{% if qs %}&{{ qs }}{% endif %}">‹ prev</a>{% endif %}
       <span class="muted">page {{ card.page }} / {{ card.pages }} · {{ card.total }} rows</span>
-      {% if card.page < card.pages %}<a href="?page={{ card.page + 1 }}">next ›</a>{% endif %}
+      {% if card.page < card.pages %}<a href="?page={{ card.page + 1 }}{% if qs %}&{{ qs }}{% endif %}">next ›</a>{% endif %}
     </div>
     {% else %}<p class="muted">no rows</p>{% endif %}
   {% elif card.type == 'chart' %}

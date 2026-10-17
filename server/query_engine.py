@@ -29,6 +29,32 @@ _MULTI_STATEMENT = re.compile(r";\s*\S")
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
 
 
+_PLACEHOLDER = re.compile(r":([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])")
+
+
+def substitute_params(sql: str, values: dict) -> str:
+    """Substitute declared ``:name`` placeholders with escaped string literals.
+
+    Only names present in ``values`` are substituted; every other
+    ``:placeholder`` is left untouched (it will then fail validation or
+    execution rather than be injected). Values are escaped (backslashes
+    doubled, single quotes doubled) so they cannot break out of their
+    literal — there is no raw string interpolation of request input.
+
+    Callers must resolve every declared param to a concrete value (request
+    value or its default) before calling, so no declared placeholder is
+    left raw in the SQL.
+    """
+    def _repl(m):
+        name = m.group(1)
+        if name not in values or values[name] is None:
+            return m.group(0)
+        v = str(values[name])
+        return "'" + v.replace("\\", "\\\\").replace("'", "''") + "'"
+
+    return _PLACEHOLDER.sub(_repl, sql)
+
+
 def validate_select(sql: str) -> str:
     s = sql.strip()
     if s.endswith(";"):

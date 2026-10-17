@@ -1,10 +1,12 @@
+import copy
 import datetime
 import json
 import math
 import os
+import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -77,8 +79,145 @@ def _query_sql(query_id: int) -> str:
         conn.close()
 
 
-def _render_card(card: dict, page: int) -> dict:
-    """Render one card into template-ready data (query + config -> payload)."""
+_ALLOWED_CACHE: dict = {}  # allowed_query sql -> (monotonic, set of values)
+_ALLOWED_CACHE_TTL = 300  # seconds
+
+
+def _allowed_set(sql: str) -> set:
+    """First-column values of an allowed_query (TTL-cached)."""
+    now = time.monotonic()
+    hit = _ALLOWED_CACHE.get(sql)
+    if hit and now - hit[0] < _ALLOWED_CACHE_TTL:
+        return hit[1]
+    res = query_engine.run_preview(sql, limit=500)
+    allowed = {str(r[res["columns"][0]]) for r in res["rows"]}
+    _ALLOWED_CACHE[sql] = (now, allowed)
+    return allowed
+
+
+def _resolve_card_params(cfg: dict, request_params: dict) -> dict:
+    """Resolve a card's declared ``config.params`` against request query params.
+
+    Declared forms (per param name):
+      - ``"default"`` — plain string default.
+      - ``{"default": "X", "allowed_query": "SELECT ..."}`` — the request
+        value is validated against the first column of ``allowed_query``
+        (run through the same read-only query engine); a value outside the
+        allowed set falls back to the default.
+
+    Every declared name is always resolved to a concrete string so that all
+    ``:name`` placeholders in the card's SQL get substituted (never left
+    raw). Missing/blank request values use the default.
+    """
+    declared = cfg.get("params") or {}
+    resolved = {}
+    for name, spec in declared.items():
+        if isinstance(spec, dict):
+            default = spec.get("default")
+            allowed_query = spec.get("allowed_query")
+        else:
+            default, allowed_query = spec, None
+        raw = request_params.get(name)
+        raw = raw.strip() if isinstance(raw, str) else None
+        if raw:
+            value = raw
+            if allowed_query:
+                allowed = _allowed_set(allowed_query)
+                if value not in allowed:
+                    value = default if default is not None else ""
+        else:
+            value = default if default is not None else ""
+        resolved[name] = str(value)
+    return resolved
+
+
+def _apply_chart_data(option: dict, result: dict, data_map: dict) -> dict:
+    """Fill ``option.series[*].data`` (and ``xAxis.data`` for bar/column)
+    from live query rows. Only ``data`` is filled — the rest of the ECharts
+    option is left exactly as authored.
+
+    ``data_map`` keys: ``x`` (label column), ``value`` (value column),
+    ``series`` (optional grouping column).
+      - no ``series``: one series; values in row order; x labels from the
+        ``x`` column become xAxis categories for bar/column (ignored for
+        pie, where data is ``[{name: x, value: v}]``).
+      - with ``series``: one series per distinct ``series`` value (first-
+        seen order, matched by index into ``option.series``); shared x
+        labels = distinct x values in first-seen order. Pie data uses the
+        ``series`` value as the name when present.
+    """
+    xcol = data_map.get("x")
+    vcol = data_map.get("value")
+    scol = data_map.get("series")
+    if not xcol or not vcol:
+        raise ValueError("chart data_map requires 'x' and 'value'")
+    columns = result["columns"]
+    rows = result["rows"]
+    missing = [c for c in (xcol, vcol, scol) if c and c not in columns]
+    if missing:
+        raise ValueError(f"chart data_map columns not in query result: {', '.join(missing)}")
+
+    series_list = option.get("series")
+    if not isinstance(series_list, list) or not series_list:
+        raise ValueError("chart option has no series to fill")
+
+    def _num(v):
+        if v is None:
+            return 0
+        if isinstance(v, (int, float)):
+            return v
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return v
+
+    is_pie = series_list[0].get("type") == "pie"
+    if scol:
+        svals = []
+        xlabels = []
+        for r in rows:
+            sv = r[scol]
+            if sv not in svals:
+                svals.append(sv)
+            xv = str(r[xcol])
+            if xv not in xlabels:
+                xlabels.append(xv)
+        if is_pie:
+            series_list[0]["data"] = [
+                {"name": str(r[scol]), "value": _num(r[vcol])} for r in rows
+            ]
+        else:
+            if len(svals) > len(series_list):
+                raise ValueError("more series in data than option.series slots")
+            for i, sv in enumerate(svals):
+                series_list[i]["data"] = [_num(r[vcol]) for r in rows if r[scol] == sv]
+    else:
+        xlabels = [str(r[xcol]) for r in rows]
+        if is_pie:
+            series_list[0]["data"] = [
+                {"name": str(r[xcol]), "value": _num(r[vcol])} for r in rows
+            ]
+        else:
+            series_list[0]["data"] = [_num(r[vcol]) for r in rows]
+
+    if not is_pie:
+        xa = option.get("xAxis")
+        if isinstance(xa, dict):
+            xa["data"] = xlabels
+        elif isinstance(xa, list) and xa and isinstance(xa[0], dict):
+            xa[0]["data"] = xlabels
+    return option
+
+
+def _render_card(card: dict, page: int, request_params: dict | None = None) -> dict:
+    """Render one card into template-ready data (query + config -> payload).
+
+    ``request_params`` are the dashboard route's query params (e.g.
+    ``category``); a card's declared ``config.params`` are resolved against
+    them and substituted into the card's SQL (see ``_resolve_card_params``
+    and ``query_engine.substitute_params``).
+    """
+    request_params = request_params or {}
     out = {
         "id": card["id"],
         "type": card["type"],
@@ -89,16 +228,25 @@ def _render_card(card: dict, page: int) -> dict:
     if isinstance(cfg, str):
         cfg = json.loads(cfg)
     out["config"] = cfg
+    params = _resolve_card_params(cfg, request_params)
+    # Substitute declared params in the title too (plain text, not SQL).
+    title = out["title"]
+    for _name, _value in params.items():
+        if _value is not None:
+            title = title.replace(f":{_name}", str(_value))
+    out["title"] = title
 
     if card["type"] == "label":
         out["level"] = max(1, min(4, int(cfg.get("level", 3))))
         out["text"] = cfg.get("text", "")
         if cfg.get("value_query"):
-            res = query_engine.run_preview(cfg["value_query"], limit=1)
+            sql = query_engine.substitute_params(cfg["value_query"], params)
+            res = query_engine.run_preview(sql, limit=1)
             if res["rows"]:
                 out["value"] = _fmt(res["rows"][0][res["columns"][0]], cfg.get("format", "text"))
         if cfg.get("delta_query"):
-            dres = query_engine.run_preview(cfg["delta_query"], limit=1)
+            sql = query_engine.substitute_params(cfg["delta_query"], params)
+            dres = query_engine.run_preview(sql, limit=1)
             if dres["rows"]:
                 raw = dres["rows"][0][dres["columns"][0]]
                 if raw is not None:
@@ -122,7 +270,7 @@ def _render_card(card: dict, page: int) -> dict:
     if card["type"] == "table":
         if not card.get("query_id"):
             raise ValueError("table card has no query_id")
-        sql = _query_sql(card["query_id"])
+        sql = query_engine.substitute_params(_query_sql(card["query_id"]), params)
         page_size = max(1, min(int(cfg.get("page_size", config.DEFAULT_PAGE_SIZE)), config.MAX_PAGE_SIZE))
         res = query_engine.run_query(sql, page=page, page_size=page_size)
         out.update(
@@ -138,10 +286,23 @@ def _render_card(card: dict, page: int) -> dict:
         return out
 
     if card["type"] == "chart":
-        option = cfg.get("option")
+        option = copy.deepcopy(cfg.get("option"))
         if not option:
             raise ValueError("chart card missing config.option (ECharts option)")
-        # Data is self-contained in the option (query_id is optional provenance).
+        if cfg.get("data_query") or card.get("query_id"):
+            # Live data: run the inline data_query (or the saved query_id)
+            # through the query engine (same caps/timeout) at render time
+            # and fill option.series[*].data per config.data_map.
+            if cfg.get("data_query"):
+                sql = cfg["data_query"]
+            else:
+                sql = _query_sql(card["query_id"])
+            sql = query_engine.substitute_params(sql, params)
+            res = query_engine.run_preview(sql, limit=config.PREVIEW_LIMIT)
+            data_map = cfg.get("data_map")
+            if not data_map:
+                raise ValueError("chart card with data_query/query_id needs config.data_map")
+            option = _apply_chart_data(option, res, data_map)
         # Escape "</" so a "</script>" inside the option JSON cannot break out of the tag.
         out["option_json"] = json.dumps(option).replace("</", "<\\/")
         return out
@@ -168,7 +329,7 @@ def index():
 
 
 @app.get("/d/{slug}", response_class=HTMLResponse)
-def dashboard(slug: str, page: int = 1):
+def dashboard(slug: str, page: int = 1, request: Request = None):
     conn = _reports_conn()
     try:
         cur = conn.cursor(dictionary=True)
@@ -185,16 +346,22 @@ def dashboard(slug: str, page: int = 1):
     finally:
         conn.close()
 
+    # Single-param (or any declared-param) substitution: cards declare
+    # config.params {name: default}; request query params fill them in
+    # (e.g. ?category=Food%20%26%20Dining). Raw values are kept for the
+    # pager links so params survive pagination.
+    request_params = {k: v for k, v in (request.query_params.items() if request else []) if k != "page"}
+
     rendered = []
     for card in cards:
         try:
-            rendered.append(_render_card(card, page))
+            rendered.append(_render_card(card, page, request_params))
         except Exception as e:  # surface card errors inline, don't kill the page
             rendered.append(
                 {"id": card["id"], "type": "error", "title": card.get("title") or "card", "error": str(e)}
             )
     return jinja.get_template("dashboard.html").render(
-        dash=dash, cards=rendered, page=page, fmt=_fmt
+        dash=dash, cards=rendered, page=page, fmt=_fmt, params=request_params
     )
 
 
