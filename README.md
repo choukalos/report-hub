@@ -82,6 +82,46 @@ derived in SQL from the latest month in `finance.monthly_category_summary`
 | `/d/tax-savings` | "What's the income/tax/savings trajectory?" — latest tax-year KPIs (income, tax paid, est. savings, savings rate) with prior-year deltas, income-vs-tax by year, savings-rate line, all years table (from `finance.tax_years`). |
 | `/d/data-health` | "Is the pipeline and the data healthy?" — total transactions, last ingest, uncategorized count, ingest history, pending category suggestions (renders empty state when none), and a per-bucket MoM/YoY spend watch with an `ALERT` flag when the MoM or YoY change exceeds 30% (in either direction). |
 
+## v3 dashboards
+
+Seeded by `seed/v3_yearly_review.sql` + `seed/v3_datahub.sql`
+(idempotent — delete-then-insert per slug; safe to re-run). Same money
+conventions as v1.
+
+| slug | what it answers |
+|---|---|
+| `/d/yearly?year=<YYYY>` | "What did we spend in a given year?" — full-year spend with YoY delta vs the prior calendar year, txn count, monthly spend (Jan–Dec), category mix (top 10 + Other), spend by year (all data), category/payee/monthly summaries, all transactions for the year (250/page). `?year=` takes a year present in `finance.transactions` (URL-encoded not needed); the selector lists every year in the data (2021+ as of seed time); default = latest year in the data (2026, partial); unknown values fall back to the default. Re-run the seed to refresh the default when a new year lands. |
+| `/d/datahub` | "What's in the generic data hub?" — active-dataset count, rows loaded (all time), rows-loaded-by-day (90d), dataset registry (`hub.datasets`), ingest history (`hub.load_log`). Static SQL only — always valid. |
+| `/d/demo-weather` | v3 demo: a dashboard over a hub generic dataset (`hub.ds_demo-weather`, 14 sample daily readings — demo data, not a real sensor). Proves the per-dataset pattern below end-to-end. |
+
+### Dashboard over a hub dataset (v3 pattern)
+
+The engine substitutes `:param` placeholders as **escaped string
+literals only**, so a dashboard cannot reference a dynamic
+`hub.ds_<name>` table via a param (a table name is not a string value).
+Per-dataset dashboards are therefore **generated per dataset** with
+static SQL against the concrete target table — the normal AI-managed
+workflow:
+
+1. Register the dataset in data-hub (`POST /api/datasets`, or drop a CSV
+   in the inbox and let the watcher infer it) → target table
+   `hub.ds_<name>`.
+2. Insert a `dashboards` row + `cards` rows whose SQL references
+   `hub.ds_<name>` (fully qualified; card queries run on the finance
+   connection and `dh_reports` has SELECT on `hub.*`). Backtick-qualify
+   the table name — dataset slugs allow hyphens
+   (``SELECT ... FROM `hub`.`ds_my-dataset` ``).
+3. Keep the SQL generic-friendly: the adapter always adds `id`
+   (PK), `content_hash`, `ingested_at` columns; data columns are the
+   slugified CSV headers (`id` → `col_id`).
+4. Seed it in a versioned file (`seed/v3_*.sql`, idempotent) so the
+   dashboard survives a `reports` db rebuild.
+
+`/d/demo-weather` is the reference example (dual-series chart + raw
+table). To retire a dataset's dashboard: delete the dashboard slug
+(cards cascade), then `DELETE /api/datasets/<name>` + drop the table in
+data-hub.
+
 ## How to add a dashboard
 
 1. Ask the AI (or do it yourself as `dh_reports`): insert a `queries` row
@@ -93,7 +133,8 @@ derived in SQL from the latest month in `finance.monthly_category_summary`
 3. To refresh the static bits of the v1 finance dashboards (e.g. after
    the `?category=` default or the kid definition changes), re-run the
    versioned seed: `mysql -h thor.local -u dh_reports -p reports <
-   seed/v1_finance_dashboards.sql`.
+   seed/v1_finance_dashboards.sql`. v3 seeds work the same way
+   (`seed/v3_yearly_review.sql`, `seed/v3_datahub.sql`).
 
 ## Run
 
