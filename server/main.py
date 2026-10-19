@@ -3,9 +3,11 @@ import datetime
 import json
 import math
 import os
+import re
 import sys
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -210,13 +212,118 @@ def _apply_chart_data(option: dict, result: dict, data_map: dict) -> dict:
     return option
 
 
-def _render_card(card: dict, page: int, request_params: dict | None = None) -> dict:
+def _build_param_nav(layout, request_params: dict, slug: str = ""):
+    """Normalize a dashboard's ``layout.param_nav`` into a list of picker items.
+
+    ``param_nav`` may be a single dict (legacy form) or a LIST of
+    ``{param, label, all_label, query}`` entries. Each item's ``query``
+    (run read-only) lists the selectable values for its request param.
+
+    Per item, ``other_params`` carries the remaining request params
+    (excluding ``page`` and the item's own param) so the template's
+    onchange/reset preserve them; ``reset_qs`` is the URL-encoded form of
+    that dict for the reset link. Returns a list of items, or None when
+    nothing usable is declared.
+    """
+    if isinstance(layout, str):
+        try:
+            layout = json.loads(layout)
+        except (TypeError, ValueError):
+            layout = None
+    nav = (layout or {}).get("param_nav") if isinstance(layout, dict) else None
+    if isinstance(nav, dict):  # legacy single-dict form
+        nav = [nav]
+    if not isinstance(nav, list):
+        return None
+    items = []
+    for entry in nav:
+        if not (isinstance(entry, dict) and entry.get("param") and entry.get("query")):
+            continue
+        try:
+            res = query_engine.run_preview(entry["query"], limit=200)
+            col = res["columns"][0]
+            values = [r[col] for r in res["rows"] if r.get(col) is not None]
+            current = request_params.get(entry["param"]) or ""
+            if current and current not in values:
+                values = [current] + values
+            other = {
+                k: v for k, v in request_params.items()
+                if k != "page" and k != entry["param"]
+            }
+            items.append(
+                {
+                    "param": entry["param"],
+                    "label": entry.get("label") or entry["param"],
+                    "all_label": entry.get("all_label") or "(default)",
+                    "values": values,
+                    "current": current,
+                    "other_params": other,
+                    "reset_qs": urlencode(other),
+                }
+            )
+        except Exception as e:  # nav is cosmetic — never kill the page
+            print(f"param_nav failed for {slug}: {e}", file=sys.stderr)
+    return items or None
+
+
+def _link_value(spec, row: dict, params: dict):
+    """Resolve one link ``value_spec`` to a concrete string.
+
+    ``"{col}"`` -> the row's value for column ``col`` (typically the linked
+    column's own value); ``":name"`` -> the card's RESOLVED param value
+    (effective value after validation/fallback); anything else is a
+    literal string.
+    """
+    if isinstance(spec, str):
+        m = re.fullmatch(r"\{([^{}]+)\}", spec)
+        if m and m.group(1) in row:
+            v = row[m.group(1)]
+            return "" if v is None else str(v)
+        if spec.startswith(":") and spec[1:] in params:
+            return str(params[spec[1:]])
+        return spec
+    return "" if spec is None else str(spec)
+
+
+def _build_link_href(spec, row: dict, linked_col: str, params: dict, slug: str):
+    """Build a server-side drill-down href for one table row link.
+
+    ``spec`` forms:
+      - legacy string ``target_param``: same dashboard,
+        ``?target_param=<linked column's row value>`` (kept working).
+      - dict ``{dashboard?: str, params: {target_param: value_spec}}``:
+        ``dashboard`` omitted/empty = same dashboard (``?qs``), else
+        ``/d/<dashboard>?qs``. Values are URL-encoded.
+
+    Returns None for unusable specs.
+    """
+    if isinstance(spec, str):
+        if not spec:
+            return None
+        value = row.get(linked_col)
+        return "?" + urlencode({spec: "" if value is None else str(value)})
+    if isinstance(spec, dict):
+        target = spec.get("dashboard") or ""
+        link_params = spec.get("params") or {}
+        if not isinstance(link_params, dict) or not link_params:
+            return None
+        values = {k: _link_value(v, row, params) for k, v in link_params.items()}
+        qs = urlencode(values)
+        if target and target != slug:
+            return f"/d/{target}" + (f"?{qs}" if qs else "")
+        return "?" + qs
+    return None
+
+
+def _render_card(card: dict, page: int, request_params: dict | None = None, slug: str = "") -> dict:
     """Render one card into template-ready data (query + config -> payload).
 
     ``request_params`` are the dashboard route's query params (e.g.
     ``category``); a card's declared ``config.params`` are resolved against
     them and substituted into the card's SQL (see ``_resolve_card_params``
-    and ``query_engine.substitute_params``).
+    and ``query_engine.substitute_params``). ``slug`` is the dashboard's
+    slug, used to build server-side drill-down link hrefs (same-dashboard
+    vs cross-dashboard).
     """
     request_params = request_params or {}
     out = {
@@ -274,6 +381,18 @@ def _render_card(card: dict, page: int, request_params: dict | None = None) -> d
         sql = query_engine.substitute_params(_query_sql(card["query_id"]), params)
         page_size = max(1, min(int(cfg.get("page_size", config.DEFAULT_PAGE_SIZE)), config.MAX_PAGE_SIZE))
         res = query_engine.run_query(sql, page=page, page_size=page_size)
+        links = cfg.get("links") or {}
+        # Drill-down links: build the final hrefs server-side (URL-encoded,
+        # legacy string or {dashboard, params} dict specs) and attach them
+        # per row as row["_links"] = {column: href}.
+        if links:
+            for r in res["rows"]:
+                row_links = {}
+                for col, spec in links.items():
+                    href = _build_link_href(spec, r, col, params, slug)
+                    if href:
+                        row_links[col] = href
+                r["_links"] = row_links
         out.update(
             columns=res["columns"],
             rows=res["rows"],
@@ -283,7 +402,7 @@ def _render_card(card: dict, page: int, request_params: dict | None = None) -> d
             pages=math.ceil(res["total"] / res["page_size"]) if res["total"] else 1,
             formats=cfg.get("formats", {}),
             hide=set(cfg.get("hide", [])),
-            links=cfg.get("links", {}),
+            links=links,
         )
         return out
 
@@ -307,6 +426,36 @@ def _render_card(card: dict, page: int, request_params: dict | None = None) -> d
             option = _apply_chart_data(option, res, data_map)
         # Escape "</" so a "</script>" inside the option JSON cannot break out of the tag.
         out["option_json"] = json.dumps(option).replace("</", "<\\/")
+        # Chart click links: config.link = {dashboard?, params: {target_param:
+        # value_spec}, exclude?: [values]}. "{x}" is DYNAMIC (the clicked
+        # point's x value, ECharts params.name — pie slice name or bar
+        # x-label); ":name" resolves to the card's resolved param value;
+        # anything else is a static literal. The template wires a click
+        # handler that navigates to url + '?' + qs (skipping excluded x
+        # values, e.g. a pie's "Other" slice).
+        link_cfg = cfg.get("link")
+        if isinstance(link_cfg, dict):
+            link_params = link_cfg.get("params") or {}
+            if isinstance(link_params, dict) and link_params:
+                static, dynamic = {}, {}
+                for name, value_spec in link_params.items():
+                    if isinstance(value_spec, str) and value_spec == "{x}":
+                        dynamic[name] = True
+                    elif (
+                        isinstance(value_spec, str)
+                        and value_spec.startswith(":")
+                        and value_spec[1:] in params
+                    ):
+                        static[name] = params[value_spec[1:]]
+                    else:
+                        static[name] = "" if value_spec is None else str(value_spec)
+                target = link_cfg.get("dashboard") or ""
+                out["chart_link"] = {
+                    "url": f"/d/{target}" if target and target != slug else "?",
+                    "static": static,
+                    "dynamic": dynamic,
+                    "exclude": [str(v) for v in (link_cfg.get("exclude") or [])],
+                }
         return out
 
     raise ValueError(f"unknown card type: {card['type']}")
@@ -354,41 +503,17 @@ def dashboard(slug: str, page: int = 1, request: Request = None):
     # pager links so params survive pagination.
     request_params = {k: v for k, v in (request.query_params.items() if request else []) if k != "page"}
 
-    # Param nav (e.g. the category drill-down selector): the dashboard's
-    # ``layout`` JSON may declare ``param_nav: {param, label, all_label,
-    # query}`` — the query (run read-only) lists the selectable values for
-    # that request param; the template renders a dropdown.
-    param_nav = None
-    layout = dash.get("layout")
-    if isinstance(layout, str):
-        try:
-            layout = json.loads(layout)
-        except (TypeError, ValueError):
-            layout = None
-    nav = (layout or {}).get("param_nav") if isinstance(layout, dict) else None
-    if isinstance(nav, dict) and nav.get("param") and nav.get("query"):
-        try:
-            res = query_engine.run_preview(nav["query"], limit=200)
-            col = res["columns"][0]
-            values = [r[col] for r in res["rows"] if r.get(col) is not None]
-            current = request_params.get(nav["param"]) or ""
-            if current and current not in values:
-                values = [current] + values
-            param_nav = {
-                "param": nav["param"],
-                "label": nav.get("label") or nav["param"],
-                "all_label": nav.get("all_label") or "(default)",
-                "values": values,
-                "current": current,
-            }
-        except Exception as e:  # nav is cosmetic — never kill the page
-            param_nav = None
-            print(f"param_nav failed for {slug}: {e}", file=sys.stderr)
+    # Param nav (multi-picker drill-down selectors): the dashboard's
+    # ``layout`` JSON may declare ``param_nav`` as a single dict (legacy)
+    # or a list of {param, label, all_label, query} entries — each becomes
+    # one dropdown; the template's onchange/reset preserve the other
+    # request params.
+    param_nav = _build_param_nav(dash.get("layout"), request_params, slug)
 
     rendered = []
     for card in cards:
         try:
-            rendered.append(_render_card(card, page, request_params))
+            rendered.append(_render_card(card, page, request_params, slug))
         except Exception as e:  # surface card errors inline, don't kill the page
             rendered.append(
                 {"id": card["id"], "type": "error", "title": card.get("title") or "card", "error": str(e)}

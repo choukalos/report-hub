@@ -12,14 +12,35 @@
 
 {% if param_nav %}
 <div class="param-nav">
-  <label for="param-select">{{ param_nav.label }}:</label>
-  <select id="param-select" onchange="if (this.value) location.href = '/d/{{ dash.slug }}?{{ param_nav.param }}=' + encodeURIComponent(this.value); else location.href = '/d/{{ dash.slug }}';">
-    <option value="">{{ param_nav.all_label }}</option>
-    {% for v in param_nav['values'] %}
-    <option value="{{ v }}"{% if v == param_nav.current %} selected{% endif %}>{{ v }}</option>
-    {% endfor %}
-  </select>
-  {% if param_nav.current %}<span class="muted">showing: <strong>{{ param_nav.current }}</strong> · <a href="/d/{{ dash.slug }}">reset</a></span>{% endif %}
+  {% for item in param_nav %}
+  <div class="param-nav-item">
+    <label for="param-select-{{ loop.index }}">{{ item.label }}:</label>
+    <select id="param-select-{{ loop.index }}">
+      <option value="">{{ item.all_label }}</option>
+      {% for v in item['values'] %}
+      <option value="{{ v }}"{% if v == item.current %} selected{% endif %}>{{ v }}</option>
+      {% endfor %}
+    </select>
+    {% if item.current %}<span class="muted">showing: <strong>{{ item.current }}</strong> · <a href="/d/{{ dash.slug }}{% if item.reset_qs %}?{{ item.reset_qs }}{% endif %}">reset</a></span>{% endif %}
+  </div>
+  {% endfor %}
+  <script>
+    (function () {
+      var items = {{ param_nav | tojson }};
+      var slug = {{ dash.slug | tojson }};
+      var selects = document.querySelectorAll('.param-nav select');
+      for (var i = 0; i < selects.length; i++) {
+        (function (sel, item) {
+          sel.addEventListener('change', function () {
+            var qs = new URLSearchParams(item.other_params || {});
+            if (sel.value) qs.set(item.param, sel.value);
+            var s = qs.toString();
+            location.href = '/d/' + slug + (s ? '?' + s : '');
+          });
+        })(selects[i], items[i]);
+      }
+    })();
+  </script>
 </div>
 {% endif %}
 
@@ -36,7 +57,7 @@
       <thead><tr>{% for col in card.columns %}{% if col not in card.hide %}<th>{{ col }}</th>{% endif %}{% endfor %}</tr></thead>
       <tbody>
       {% for row in card.rows %}
-        <tr>{% for col in card.columns %}{% if col not in card.hide %}{% if col in card.links %}<td><a class="drill" href="?{{ card.links[col] }}={{ row[col] | urlencode }}">{{ fmt(row[col], card.formats.get(col, 'text')) }}</a></td>{% else %}<td>{{ fmt(row[col], card.formats.get(col, 'text')) }}</td>{% endif %}{% endif %}{% endfor %}</tr>
+        <tr>{% for col in card.columns %}{% if col not in card.hide %}{% if col in card.links and row['_links'] and col in row['_links'] %}<td><a class="drill" href="{{ row['_links'][col] }}">{{ fmt(row[col], card.formats.get(col, 'text')) }}</a></td>{% else %}<td>{{ fmt(row[col], card.formats.get(col, 'text')) }}</td>{% endif %}{% endif %}{% endfor %}</tr>
       {% endfor %}
       </tbody>
     </table>
@@ -56,6 +77,18 @@
         var el = document.getElementById('chart-{{ card.id }}');
         var chart = echarts.init(el);
         chart.setOption({{ card.option_json | safe }});
+        {% if card.chart_link %}
+        var link = {{ card.chart_link | tojson }};
+        chart.on('click', function (p) {
+          var name = p && p.name;
+          if (!name) return;
+          if (link.exclude && link.exclude.indexOf(String(name)) !== -1) return;
+          var qs = new URLSearchParams(link.static || {});
+          Object.keys(link.dynamic || {}).forEach(function (k) { qs.set(k, String(name)); });
+          var s = qs.toString();
+          location.href = (link.url.charAt(0) === '?' ? '' : link.url) + '?' + s;
+        });
+        {% endif %}
         window.addEventListener('resize', function () { chart.resize(); });
       })();
     </script>

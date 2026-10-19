@@ -22,12 +22,16 @@
 --     (year, month) present in finance.monthly_category_summary,
 --     derived in SQL (no hardcoded dates). "24mo" = the 24 months
 --     ending there.
---   * ?category= : the `categories` dashboard cards declare
---     config.params {category: {default, allowed_query}}; the request
---     value is validated against the 21 top-level bucket names and
---     falls back to the default when absent or invalid. Default =
---     top-spend bucket over the trailing 12 months as of seed time
---     (2026-10): Auto & Transport. Re-run this seed to refresh.
+--   * ?category= / ?year= : the `categories` dashboard is year-scoped
+--     with two pickers (category + year). Cards declare
+--     config.params {category, year: {default, allowed_query}}; the
+--     request values are validated against ALL category names (buckets
+--     AND leaves, so drill-downs from the yearly dashboard's leaf rows
+--     work) and the distinct transaction years, falling back to the
+--     defaults when absent or invalid. Defaults as of seed time
+--     (2026-10): category = top-spend bucket over the trailing 12
+--     months = Food & Dining; year = latest year in the data = 2026.
+--     Re-run this seed to refresh the defaults.
 --
 -- KID DEFINITION (v1)
 --   Kid spend = transactions whose category leaf is under the
@@ -50,7 +54,7 @@
 
 -- 1) previous seed state (cards cascade from dashboards)
 DELETE FROM dashboards WHERE slug IN ('overview', 'categories', 'kids', 'tax-savings', 'data-health');
-DELETE FROM queries WHERE name IN ('fin_spend_last_month', 'fin_spend_last_month_mom', 'fin_spend_12mo', 'fin_spend_12mo_yoy', 'fin_savings_rate_latest', 'fin_savings_rate_latest_delta', 'fin_kid_share_12mo', 'fin_kid_share_12mo_delta', 'fin_monthly_spend_24m', 'fin_top10_leaf_spend_12mo', 'fin_monthly_totals', 'fin_cat_spend_12mo', 'fin_cat_spend_mom', 'fin_cat_monthly_trend_24m', 'fin_cat_top_payees_12mo', 'fin_cat_recent_txns_12mo', 'fin_bucket_totals_12mo', 'fin_kid_spend_12mo', 'fin_kid_spend_12mo_yoy', 'fin_kid_monthly_vs_total_24m', 'fin_kid_spend_by_year', 'fin_kid_top_payees_12mo', 'fin_kid_recent_txns_12mo', 'fin_tax_income_latest', 'fin_tax_income_latest_delta', 'fin_tax_paid_latest', 'fin_tax_paid_latest_delta', 'fin_tax_savings_latest', 'fin_tax_savings_latest_delta', 'fin_tax_income_vs_paid_by_year', 'fin_tax_rate_by_year', 'fin_tax_all_years', 'fin_txn_total', 'fin_last_ingest', 'fin_uncategorized_count', 'fin_load_log', 'fin_pending_suggestions', 'fin_bucket_watch_12mo');
+DELETE FROM queries WHERE name IN ('fin_spend_last_month', 'fin_spend_last_month_mom', 'fin_spend_12mo', 'fin_spend_12mo_yoy', 'fin_savings_rate_latest', 'fin_savings_rate_latest_delta', 'fin_kid_share_12mo', 'fin_kid_share_12mo_delta', 'fin_monthly_spend_24m', 'fin_top10_leaf_spend_12mo', 'fin_monthly_totals', 'fin_cat_spend_12mo', 'fin_cat_spend_mom', 'fin_cat_monthly_trend_24m', 'fin_cat_top_payees_12mo', 'fin_cat_recent_txns_12mo', 'fin_bucket_totals_12mo', 'fin_cat_year_spend', 'fin_cat_year_spend_yoy', 'fin_cat_year_monthly', 'fin_cat_year_top_payees', 'fin_cat_year_txns', 'fin_cat_year_bucket_totals', 'fin_kid_spend_12mo', 'fin_kid_spend_12mo_yoy', 'fin_kid_monthly_vs_total_24m', 'fin_kid_spend_by_year', 'fin_kid_top_payees_12mo', 'fin_kid_recent_txns_12mo', 'fin_tax_income_latest', 'fin_tax_income_latest_delta', 'fin_tax_paid_latest', 'fin_tax_paid_latest_delta', 'fin_tax_savings_latest', 'fin_tax_savings_latest_delta', 'fin_tax_income_vs_paid_by_year', 'fin_tax_rate_by_year', 'fin_tax_all_years', 'fin_txn_total', 'fin_last_ingest', 'fin_uncategorized_count', 'fin_load_log', 'fin_pending_suggestions', 'fin_bucket_watch_12mo');
 
 -- 2) saved queries
 
@@ -197,99 +201,64 @@ FROM m
 LEFT JOIN t ON t.y = m.y AND t.mo = m.mo
 ORDER BY m.y DESC, m.mo DESC', NULL, 'Monthly totals: spend/deposits/net (cents, mcs rollup) + txn_count (transactions)');
 
-INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_spend_12mo', 'WITH latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),
-win AS (
-  SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0,
-         DATE_SUB(STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d''), INTERVAL 11 MONTH) m12
-  FROM latest
-)
-SELECT COALESCE(SUM(CASE WHEN t.amount_cents < 0 THEN -t.amount_cents END), 0)
+INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_year_spend', 'SELECT COALESCE(SUM(CASE WHEN t.amount_cents < 0 AND c.bucket NOT IN (''Transfer'', ''Income'') THEN -t.amount_cents END), 0)
 FROM transactions t
 JOIN categories c ON c.id = t.category_id
-CROSS JOIN win w
-WHERE c.bucket = :category
-  AND t.txn_date >= w.m12 AND t.txn_date < DATE_ADD(w.m0, INTERVAL 1 MONTH)', '{"category": "Auto & Transport"}', 'Spend (cents) in bucket :category over trailing 12 months');
+WHERE (c.bucket = :category OR c.name = :category)
+  AND YEAR(t.txn_date) = :year', '{"category": "Food & Dining", "year": "2026"}', 'Spend (cents) in category :category (bucket or leaf) in calendar year :year, excl. Transfer/Income');
 
-INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_spend_mom', 'WITH latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),
-win AS (SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0 FROM latest)
-SELECT (SUM(CASE WHEN t.txn_date >= w.m0 THEN -t.amount_cents ELSE 0 END)
-       / NULLIF(SUM(CASE WHEN t.txn_date < w.m0 THEN -t.amount_cents ELSE 0 END), 0)) - 1
+INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_year_spend_yoy', 'SELECT (COALESCE(SUM(CASE WHEN YEAR(t.txn_date) = :year AND t.amount_cents < 0 AND c.bucket NOT IN (''Transfer'', ''Income'') THEN -t.amount_cents END), 0)
+       / NULLIF(COALESCE(SUM(CASE WHEN YEAR(t.txn_date) = :year - 1 AND t.amount_cents < 0 AND c.bucket NOT IN (''Transfer'', ''Income'') THEN -t.amount_cents END), 0), 0)) - 1
 FROM transactions t
 JOIN categories c ON c.id = t.category_id
-CROSS JOIN win w
-WHERE c.bucket = :category
-  AND t.amount_cents < 0
-  AND t.txn_date >= DATE_SUB(w.m0, INTERVAL 1 MONTH)', '{"category": "Auto & Transport"}', 'MoM fractional spend change in bucket :category');
+WHERE (c.bucket = :category OR c.name = :category)
+  AND YEAR(t.txn_date) BETWEEN :year - 1 AND :year', '{"category": "Food & Dining", "year": "2026"}', 'YoY fractional spend change in :category for :year vs prior calendar year (NULL when prior year has no data)');
 
-INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_monthly_trend_24m', 'WITH RECURSIVE latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),
-win AS (SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0 FROM latest),
-months AS (
-  SELECT DATE_FORMAT(DATE_SUB(w.m0, INTERVAL 23 MONTH), ''%Y-%m'') ym,
-         DATE_SUB(w.m0, INTERVAL 23 MONTH) mstart,
-         1 n
-  FROM win w
+INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_year_monthly', 'WITH RECURSIVE months AS (
+  SELECT STR_TO_DATE(CONCAT(:year, ''-01-01''), ''%Y-%m-%d'') mstart, 1 n
   UNION ALL
-  SELECT DATE_FORMAT(DATE_ADD(mstart, INTERVAL 1 MONTH), ''%Y-%m''),
-         DATE_ADD(mstart, INTERVAL 1 MONTH),
-         n + 1
+  SELECT DATE_ADD(mstart, INTERVAL 1 MONTH), n + 1
   FROM months
-  WHERE n < 24
+  WHERE n < 12
 )
-SELECT mo.ym,
-       ROUND(COALESCE(SUM(CASE WHEN t.amount_cents < 0 AND c.id IS NOT NULL THEN -t.amount_cents END), 0) / 100, 2) spend
+SELECT DATE_FORMAT(mo.mstart, ''%Y-%m'') ym,
+       ROUND(COALESCE(SUM(CASE WHEN t.amount_cents < 0 AND c.bucket NOT IN (''Transfer'', ''Income'') THEN -t.amount_cents END), 0) / 100, 2) spend
 FROM months mo
 LEFT JOIN transactions t ON t.txn_date >= mo.mstart AND t.txn_date < DATE_ADD(mo.mstart, INTERVAL 1 MONTH)
-LEFT JOIN categories c ON c.id = t.category_id AND c.bucket = :category
-GROUP BY mo.ym, mo.mstart
-ORDER BY mo.mstart', '{"category": "Auto & Transport"}', 'Monthly spend (dollars) in bucket :category, 24 months');
+LEFT JOIN categories c ON c.id = t.category_id AND (c.bucket = :category OR c.name = :category)
+GROUP BY mo.mstart
+ORDER BY mo.mstart', '{"category": "Food & Dining", "year": "2026"}', 'Monthly spend (dollars) in category :category for calendar year :year, Jan-Dec spine (months with no data = 0)');
 
-INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_top_payees_12mo', 'WITH latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),
-win AS (
-  SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0,
-         DATE_SUB(STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d''), INTERVAL 11 MONTH) m12
-  FROM latest
-)
-SELECT t.payee,
+INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_year_top_payees', 'SELECT t.payee,
        COUNT(*) txn_count,
-       SUM(-t.amount_cents) total_cents,
+       COALESCE(SUM(CASE WHEN t.amount_cents < 0 THEN -t.amount_cents END), 0) total_cents,
        MAX(t.txn_date) last_seen
 FROM transactions t
 JOIN categories c ON c.id = t.category_id
-CROSS JOIN win w
-WHERE c.bucket = :category
+WHERE (c.bucket = :category OR c.name = :category)
   AND t.amount_cents < 0
-  AND t.txn_date >= w.m12 AND t.txn_date < DATE_ADD(w.m0, INTERVAL 1 MONTH)
+  AND YEAR(t.txn_date) = :year
 GROUP BY t.payee
 ORDER BY total_cents DESC
-LIMIT 25', '{"category": "Auto & Transport"}', 'Top payees in bucket :category over trailing 12 months');
+LIMIT 25', '{"category": "Food & Dining", "year": "2026"}', 'Top payees in category :category in calendar year :year (spend only)');
 
-INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_recent_txns_12mo', 'WITH latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),
-win AS (
-  SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0,
-         DATE_SUB(STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d''), INTERVAL 11 MONTH) m12
-  FROM latest
-)
-SELECT t.txn_date date, t.payee, t.description, t.amount_cents amount, c.name category
+INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_year_txns', 'SELECT t.txn_date date,
+       t.payee,
+       t.description,
+       t.amount_cents amount,
+       c.name category
 FROM transactions t
 JOIN categories c ON c.id = t.category_id
-CROSS JOIN win w
-WHERE c.bucket = :category
-  AND t.txn_date >= w.m12 AND t.txn_date < DATE_ADD(w.m0, INTERVAL 1 MONTH)
-ORDER BY t.txn_date DESC, t.id DESC', '{"category": "Auto & Transport"}', 'Recent transactions in bucket :category (trailing 12 months, newest first)');
+WHERE (c.bucket = :category OR c.name = :category)
+  AND YEAR(t.txn_date) = :year
+ORDER BY t.txn_date DESC, t.id DESC', '{"category": "Food & Dining", "year": "2026"}', 'All transactions in category :category in calendar year :year (newest first)');
 
-INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_bucket_totals_12mo', 'WITH latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),
-win AS (
-  SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0,
-         DATE_SUB(STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d''), INTERVAL 11 MONTH) m12
-  FROM latest
-),
-sp AS (
+INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_cat_year_bucket_totals', 'WITH sp AS (
   SELECT c.bucket, SUM(-t.amount_cents) cents
   FROM transactions t
   JOIN categories c ON c.id = t.category_id
-  CROSS JOIN win w
   WHERE t.amount_cents < 0
-    AND t.txn_date >= w.m12 AND t.txn_date < DATE_ADD(w.m0, INTERVAL 1 MONTH)
+    AND YEAR(t.txn_date) = :year
   GROUP BY c.bucket
 ),
 tot AS (SELECT SUM(cents) c FROM sp WHERE bucket NOT IN (''Income'', ''Transfer''))
@@ -300,7 +269,7 @@ SELECT b.bucket bucket,
 FROM (SELECT DISTINCT bucket FROM categories WHERE parent_id = 0) b
 CROSS JOIN tot
 LEFT JOIN sp ON sp.bucket = b.bucket
-ORDER BY spend_cents DESC', NULL, 'All 21 buckets: 12-month spend (cents) + share of spend-bucket total %');
+ORDER BY spend_cents DESC', '{"year": "2026"}', 'All 21 buckets: :year spend (cents) + share of spend-bucket total %');
 
 INSERT INTO queries (name, sql_text, params, description) VALUES ('fin_kid_spend_12mo', 'WITH latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),
 win AS (
@@ -511,15 +480,16 @@ VALUES
   ((SELECT id FROM dashboards WHERE slug = 'overview'), 7, 'table', 'Monthly totals', (SELECT id FROM queries WHERE name = 'fin_monthly_totals'), '{"formats": {"spend": "currency", "deposits": "currency", "net": "currency", "txn_count": "number"}}');
 
 -- categories
-INSERT INTO dashboards (slug, title, description, layout, is_active) VALUES ('categories', 'Categories', 'Pick a bucket in the selector (or ?category=Food%20%26%20Dining; default = top-spend bucket). 12-month spend, 24-month trend, top payees, recent transactions — click a bucket row to drill in.', '{"param_nav": {"param": "category", "label": "Bucket", "all_label": "Top-spend bucket (default)", "query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}}', 1);
+INSERT INTO dashboards (slug, title, description, layout, is_active) VALUES ('categories', 'Categories', 'Pick a category (bucket or leaf) and a year (or ?category=...&year=...). Year-scoped spend with YoY, monthly spend (bars open Transactions), top payees, transactions, all buckets (rows drill in). Default = top-spend bucket + latest year.', '{"param_nav": [{"param": "category", "label": "Category", "all_label": "Top-spend category (default)", "query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}, {"param": "year", "label": "Year", "all_label": "Latest year (default)", "query": "SELECT CAST(YEAR(txn_date) AS CHAR) y FROM transactions GROUP BY y ORDER BY y DESC"}]}', 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES
-  ((SELECT id FROM dashboards WHERE slug = 'categories'), 1, 'label', 'Spend in :category (12mo)', NULL, '{"level": 2, "value_query": "WITH latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),\\nwin AS (\\n  SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0,\\n         DATE_SUB(STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d''), INTERVAL 11 MONTH) m12\\n  FROM latest\\n)\\nSELECT COALESCE(SUM(CASE WHEN t.amount_cents < 0 THEN -t.amount_cents END), 0)\\nFROM transactions t\\nJOIN categories c ON c.id = t.category_id\\nCROSS JOIN win w\\nWHERE c.bucket = :category\\n  AND t.txn_date >= w.m12 AND t.txn_date < DATE_ADD(w.m0, INTERVAL 1 MONTH)", "format": "currency", "delta_query": "WITH latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),\\nwin AS (SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0 FROM latest)\\nSELECT (SUM(CASE WHEN t.txn_date >= w.m0 THEN -t.amount_cents ELSE 0 END)\\n       / NULLIF(SUM(CASE WHEN t.txn_date < w.m0 THEN -t.amount_cents ELSE 0 END), 0)) - 1\\nFROM transactions t\\nJOIN categories c ON c.id = t.category_id\\nCROSS JOIN win w\\nWHERE c.bucket = :category\\n  AND t.amount_cents < 0\\n  AND t.txn_date >= DATE_SUB(w.m0, INTERVAL 1 MONTH)", "delta_format": "percent", "delta_label": "MoM", "delta_good": "down", "params": {"category": {"default": "Auto & Transport", "allowed_query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}}}'),
-  ((SELECT id FROM dashboards WHERE slug = 'categories'), 2, 'chart', 'Monthly trend (24mo) in :category', (SELECT id FROM queries WHERE name = 'fin_cat_monthly_trend_24m'), '{"data_query": "WITH RECURSIVE latest AS (SELECT year ly, month lm FROM monthly_category_summary ORDER BY year DESC, month DESC LIMIT 1),\\nwin AS (SELECT STR_TO_DATE(CONCAT(ly, ''-'', LPAD(lm, 2, ''0''), ''-01''), ''%Y-%m-%d'') m0 FROM latest),\\nmonths AS (\\n  SELECT DATE_FORMAT(DATE_SUB(w.m0, INTERVAL 23 MONTH), ''%Y-%m'') ym,\\n         DATE_SUB(w.m0, INTERVAL 23 MONTH) mstart,\\n         1 n\\n  FROM win w\\n  UNION ALL\\n  SELECT DATE_FORMAT(DATE_ADD(mstart, INTERVAL 1 MONTH), ''%Y-%m''),\\n         DATE_ADD(mstart, INTERVAL 1 MONTH),\\n         n + 1\\n  FROM months\\n  WHERE n < 24\\n)\\nSELECT mo.ym,\\n       ROUND(COALESCE(SUM(CASE WHEN t.amount_cents < 0 AND c.id IS NOT NULL THEN -t.amount_cents END), 0) / 100, 2) spend\\nFROM months mo\\nLEFT JOIN transactions t ON t.txn_date >= mo.mstart AND t.txn_date < DATE_ADD(mo.mstart, INTERVAL 1 MONTH)\\nLEFT JOIN categories c ON c.id = t.category_id AND c.bucket = :category\\nGROUP BY mo.ym, mo.mstart\\nORDER BY mo.mstart", "data_map": {"x": "ym", "value": "spend"}, "option": {"tooltip": {"trigger": "axis"}, "grid": {"left": 70, "right": 20, "top": 30, "bottom": 55}, "xAxis": {"type": "category", "axisLabel": {"rotate": 45}}, "yAxis": {"type": "value", "axisLabel": {"formatter": "${value}"}}, "series": [{"name": "Spend", "type": "bar", "itemStyle": {"color": "#4f8ef7"}, "data": []}]}, "params": {"category": {"default": "Auto & Transport", "allowed_query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}}}'),
-  ((SELECT id FROM dashboards WHERE slug = 'categories'), 3, 'table', 'Top payees in :category (12mo)', (SELECT id FROM queries WHERE name = 'fin_cat_top_payees_12mo'), '{"formats": {"total_cents": "currency", "last_seen": "date", "txn_count": "number"}, "page_size": 250, "params": {"category": {"default": "Auto & Transport", "allowed_query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}}}'),
-  ((SELECT id FROM dashboards WHERE slug = 'categories'), 4, 'table', 'Recent transactions in :category (12mo)', (SELECT id FROM queries WHERE name = 'fin_cat_recent_txns_12mo'), '{"formats": {"date": "date", "amount": "currency"}, "page_size": 250, "params": {"category": {"default": "Auto & Transport", "allowed_query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}}}'),
-  ((SELECT id FROM dashboards WHERE slug = 'categories'), 5, 'table', 'All buckets (12mo) — click a bucket to drill in', (SELECT id FROM queries WHERE name = 'fin_bucket_totals_12mo'), '{"formats": {"spend_cents": "currency"}, "links": {"bucket": "category"}}');
+  ((SELECT id FROM dashboards WHERE slug = 'categories'), 1, 'label', 'Spend in :category (:year)', NULL, '{"level": 2, "value_query": "SELECT COALESCE(SUM(CASE WHEN t.amount_cents < 0 AND c.bucket NOT IN (''Transfer'', ''Income'') THEN -t.amount_cents END), 0)\\nFROM transactions t\\nJOIN categories c ON c.id = t.category_id\\nWHERE (c.bucket = :category OR c.name = :category)\\n  AND YEAR(t.txn_date) = :year", "format": "currency", "delta_query": "SELECT (COALESCE(SUM(CASE WHEN YEAR(t.txn_date) = :year AND t.amount_cents < 0 AND c.bucket NOT IN (''Transfer'', ''Income'') THEN -t.amount_cents END), 0)\\n       / NULLIF(COALESCE(SUM(CASE WHEN YEAR(t.txn_date) = :year - 1 AND t.amount_cents < 0 AND c.bucket NOT IN (''Transfer'', ''Income'') THEN -t.amount_cents END), 0), 0)) - 1\\nFROM transactions t\\nJOIN categories c ON c.id = t.category_id\\nWHERE (c.bucket = :category OR c.name = :category)\\n  AND YEAR(t.txn_date) BETWEEN :year - 1 AND :year", "delta_format": "percent", "delta_label": "YoY", "delta_good": "down", "params": {"category": {"default": "Food & Dining", "allowed_query": "SELECT name FROM categories"}, "year": {"default": "2026", "allowed_query": "SELECT CAST(YEAR(txn_date) AS CHAR) y FROM transactions GROUP BY y ORDER BY y DESC"}}}')
+,  ((SELECT id FROM dashboards WHERE slug = 'categories'), 2, 'chart', 'Monthly spend in :category (:year)', (SELECT id FROM queries WHERE name = 'fin_cat_year_monthly'), '{"data_query": "WITH RECURSIVE months AS (\\n  SELECT STR_TO_DATE(CONCAT(:year, ''-01-01''), ''%Y-%m-%d'') mstart, 1 n\\n  UNION ALL\\n  SELECT DATE_ADD(mstart, INTERVAL 1 MONTH), n + 1\\n  FROM months\\n  WHERE n < 12\\n)\\nSELECT DATE_FORMAT(mo.mstart, ''%Y-%m'') ym,\\n       ROUND(COALESCE(SUM(CASE WHEN t.amount_cents < 0 AND c.bucket NOT IN (''Transfer'', ''Income'') THEN -t.amount_cents END), 0) / 100, 2) spend\\nFROM months mo\\nLEFT JOIN transactions t ON t.txn_date >= mo.mstart AND t.txn_date < DATE_ADD(mo.mstart, INTERVAL 1 MONTH)\\nLEFT JOIN categories c ON c.id = t.category_id AND (c.bucket = :category OR c.name = :category)\\nGROUP BY mo.mstart\\nORDER BY mo.mstart", "data_map": {"x": "ym", "value": "spend"}, "link": {"dashboard": "transactions", "params": {"category": ":category", "month": "{x}"}}, "option": {"tooltip": {"trigger": "axis"}, "grid": {"left": 70, "right": 20, "top": 30, "bottom": 55}, "xAxis": {"type": "category", "axisLabel": {"rotate": 45}}, "yAxis": {"type": "value", "axisLabel": {"formatter": "${value}"}}, "series": [{"name": "Spend", "type": "bar", "itemStyle": {"color": "#4f8ef7", "cursor": "pointer"}, "data": []}]}, "params": {"category": {"default": "Food & Dining", "allowed_query": "SELECT name FROM categories"}, "year": {"default": "2026", "allowed_query": "SELECT CAST(YEAR(txn_date) AS CHAR) y FROM transactions GROUP BY y ORDER BY y DESC"}}}')
+,  ((SELECT id FROM dashboards WHERE slug = 'categories'), 3, 'table', 'Top payees in :category (:year)', (SELECT id FROM queries WHERE name = 'fin_cat_year_top_payees'), '{"formats": {"total_cents": "currency", "txn_count": "number", "last_seen": "date"}, "page_size": 250, "params": {"category": {"default": "Food & Dining", "allowed_query": "SELECT name FROM categories"}, "year": {"default": "2026", "allowed_query": "SELECT CAST(YEAR(txn_date) AS CHAR) y FROM transactions GROUP BY y ORDER BY y DESC"}}}')
+,  ((SELECT id FROM dashboards WHERE slug = 'categories'), 4, 'table', 'Transactions in :category (:year)', (SELECT id FROM queries WHERE name = 'fin_cat_year_txns'), '{"formats": {"date": "date", "amount": "currency"}, "page_size": 250, "params": {"category": {"default": "Food & Dining", "allowed_query": "SELECT name FROM categories"}, "year": {"default": "2026", "allowed_query": "SELECT CAST(YEAR(txn_date) AS CHAR) y FROM transactions GROUP BY y ORDER BY y DESC"}}}')
+,  ((SELECT id FROM dashboards WHERE slug = 'categories'), 5, 'table', 'All buckets in :year (click a bucket to drill in)', (SELECT id FROM queries WHERE name = 'fin_cat_year_bucket_totals'), '{"formats": {"spend_cents": "currency", "share_pct": "number"}, "page_size": 250, "links": {"bucket": {"params": {"category": "{bucket}", "year": ":year"}}}, "params": {"category": {"default": "Food & Dining", "allowed_query": "SELECT name FROM categories"}, "year": {"default": "2026", "allowed_query": "SELECT CAST(YEAR(txn_date) AS CHAR) y FROM transactions GROUP BY y ORDER BY y DESC"}}}');
+
 
 -- kids
 INSERT INTO dashboards (slug, title, description, is_active) VALUES ('kids', 'Kid costs', 'Kid costs = transactions in the Kids and Education buckets (activities, toys, daycare, tuition, school fees, test prep). Kid spend, share of total spend, and year-over-year trend.', 1);
