@@ -23,6 +23,17 @@ MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "migrations", "re
 
 jinja = jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_DIR), autoescape=True)
 
+# Landing-page grouping (v3.2): `dashboards.section` is a group key; the
+# index page renders one heading per section, in this order. Unknown
+# sections (e.g. a new group added later) sort after the known ones.
+SECTION_ORDER = ["finance", "datahub", "demo"]
+SECTION_TITLES = {
+    "finance": "Finance — expense analysis",
+    "datahub": "Data Hub",
+    "demo": "Demo / test data",
+    "general": "General",
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -471,12 +482,40 @@ def index():
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute(
-            "SELECT slug, title, description FROM dashboards WHERE is_active = 1 ORDER BY id"
+            """SELECT slug, title, description, section, sort_order
+               FROM dashboards WHERE is_active = 1
+               ORDER BY sort_order, id"""
         )
-        dashboards = cur.fetchall()
+        rows = cur.fetchall()
     finally:
         conn.close()
-    return jinja.get_template("index.html").render(dashboards=dashboards)
+
+    # Group by section (preserving sort order), then order the sections:
+    # known ones in SECTION_ORDER, any unknown sections after (alphabetical).
+    grouped: dict[str, list] = {}
+    for r in rows:
+        grouped.setdefault(r.get("section") or "general", []).append(r)
+    ordered_keys: list[str] = []
+    for key in SECTION_ORDER:
+        if key in grouped:
+            ordered_keys.append(key)
+    for key in sorted(k for k in grouped if k not in SECTION_ORDER):
+        ordered_keys.append(key)
+    sections = []
+    for key in ordered_keys:
+        items = sorted(
+            grouped[key], key=lambda r: (r.get("sort_order") or 100, r["slug"])
+        )
+        sections.append(
+            {
+                "key": key,
+                "title": SECTION_TITLES.get(
+                    key, key.replace("-", " ").replace("_", " ").title()
+                ),
+                "dashboards": items,
+            }
+        )
+    return jinja.get_template("index.html").render(sections=sections)
 
 
 @app.get("/d/{slug}", response_class=HTMLResponse)
@@ -541,7 +580,10 @@ def api_dashboards():
     conn = _reports_conn()
     try:
         cur = conn.cursor(dictionary=True)
-        cur.execute("SELECT id, slug, title, description, is_active FROM dashboards ORDER BY id")
+        cur.execute(
+            "SELECT id, slug, title, description, section, sort_order, is_active "
+            "FROM dashboards ORDER BY section, sort_order, id"
+        )
         return {"dashboards": cur.fetchall()}
     finally:
         conn.close()

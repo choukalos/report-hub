@@ -19,6 +19,30 @@ Architecture doc: `homelab/data-hub/ARCHITECTURE.md`.
 
 So: to change a report, ask the AI — it edits the rows in `reports.*`.
 
+## Landing page (grouped)
+
+The index page (`/`) renders dashboards in **grouped sections** (one
+heading per group) instead of a flat list. Grouping is DB-driven:
+
+- `dashboards.section` (VARCHAR, default `general`) — the group key.
+- `dashboards.sort_order` (INT, default 100) — order within a group.
+
+`server/main.py` maps section keys to headings (`SECTION_TITLES`) and
+orders the groups (`SECTION_ORDER`); any unknown section (a new group
+added later) sorts after the known ones and gets a title-cased heading.
+Current groups:
+
+| section | heading | dashboards |
+|---|---|---|
+| `finance` | Finance — expense analysis | overview, categories, yearly, kids, tax-savings, transactions, data-health |
+| `datahub` | Data Hub | datahub |
+| `demo` | Demo / test data | demo-weather |
+
+To re-group or add a section: update the `section`/`sort_order` of the
+dashboard rows (seeds) and, for a new heading, add the key to
+`SECTION_ORDER`/`SECTION_TITLES` in `server/main.py` (rebuild). Migration
+`0002_dashboard_groups.sql` adds the two columns.
+
 ## Generic card model
 
 A dashboard is an ordered set of cards; each card binds to a saved SQL
@@ -122,7 +146,7 @@ safe to re-run). Same money conventions as v1.
 
 | slug | what it answers |
 |---|---|
-| `/d/yearly?year=<YYYY>` | "What did we spend in a given year?" — full-year spend with YoY delta vs the prior calendar year, txn count, monthly spend (Jan–Dec), category mix (top 10 + Other), spend by year (all data), category/payee/monthly summaries. **Drill-downs (v3.1):** category-mix slice and category-summary row → `/d/categories?category=<leaf>&year=<year>` (pie `Other` excluded); spend-by-year bar → switches the year picker in place. The per-year transactions table was replaced by the drill-down chain. `?year=` takes a year present in `finance.transactions`; the selector lists every year in the data (2021+ as of seed time); default = latest year in the data (2026, partial); unknown values fall back to the default. Re-run the seed to refresh the default when a new year lands. |
+| `/d/yearly?year=<YYYY>` | "What did we spend in a given year?" — full-year spend with a **full-year-basis** YoY delta, txn count, monthly spend (Jan–Dec), category mix (top 10 + Other), spend by year (all data), category/payee/monthly summaries. **Full-year forecast (v3.2):** for the current (partial) year the spend KPI is year-to-date, so a second KPI shows a **linear-trend forecast** of full-year spend (`fin_year_spend_forecast` — OLS on the year's monthly spend; for a full year it equals the actual) and the YoY delta compares the **forecast** (not the YTD figure) to the prior year, so full years are compared; a note card states the basis. **Drill-downs (v3.1):** category-mix slice and category-summary row → `/d/categories?category=<leaf>&year=<year>` (pie `Other` excluded); spend-by-year bar → switches the year picker in place. `?year=` takes a year present in `finance.transactions`; the selector lists every year in the data (2021+ as of seed time); default = latest year in the data (2026, partial); unknown values fall back to the default. Re-run the seed to refresh the default when a new year lands. |
 | `/d/transactions?category=<Category>&month=<YYYY-MM>` | "What did we buy in one category in one month?" (v3.1) — the drill-down target from `/d/categories`' monthly-spend bars. Spend + vs-same-month-prior-year delta, txn count, top payees, all transactions (250/page). **Two pickers:** `?category=` (bucket or leaf) + `?month=` (a `YYYY-MM` present in the data); defaults = top-spend category (Food & Dining as of v3.1 seed time) + latest month (2026-10); unknown values fall back to the defaults. |
 | `/d/datahub` | "What's in the generic data hub?" — active-dataset count, rows loaded (all time), rows-loaded-by-day (90d), dataset registry (`hub.datasets`), ingest history (`hub.load_log`). Static SQL only — always valid. |
 | `/d/demo-weather` | v3 demo: a dashboard over a hub generic dataset (`hub.ds_demo-weather`, 14 sample daily readings — demo data, not a real sensor). Proves the per-dataset pattern below end-to-end. |

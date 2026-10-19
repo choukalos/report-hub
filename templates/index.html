@@ -2,15 +2,18 @@
 {% block title %}report-hub — dashboards{% endblock %}
 {% block content %}
 <h1>Dashboards</h1>
-{% if dashboards %}
+{% if sections %}
+{% for sec in sections %}
+<h2>{{ sec.title }}</h2>
 <ul class="dash-list">
-  {% for d in dashboards %}
+  {% for d in sec.dashboards %}
   <li>
     <a href="/d/{{ d.slug }}"><strong>{{ d.title }}</strong></a>
     {% if d.description %}<div class="muted">{{ d.description }}</div>{% endif %}
   </li>
   {% endfor %}
 </ul>
+{% endfor %}
 {% else %}
 <p class="muted">No dashboards published yet. Dashboards are created by the AI
 (inserts into <code>reports.dashboards</code> / <code>reports.cards</code>);

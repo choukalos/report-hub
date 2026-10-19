@@ -467,7 +467,7 @@ FROM sp
 ORDER BY cur_12 DESC', NULL, 'Per-bucket MoM/YoY spend watch (excl. Income/Transfer); flag=ALERT when |MoM|>30% or |YoY|>30%');
 
 -- overview
-INSERT INTO dashboards (slug, title, description, is_active) VALUES ('overview', 'Overview', 'Money at a glance: last-month and 12-month spend with MoM/YoY deltas, savings rate, kid share, and monthly totals. Answers ''how did we do last month and over the past year?''', 1);
+INSERT INTO dashboards (slug, title, description, section, sort_order, is_active) VALUES ('overview', 'Overview', 'Money at a glance: last-month and 12-month spend with MoM/YoY deltas, savings rate, kid share, and monthly totals. Answers ''how did we do last month and over the past year?''', 'finance', 10, 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES
@@ -480,7 +480,7 @@ VALUES
   ((SELECT id FROM dashboards WHERE slug = 'overview'), 7, 'table', 'Monthly totals', (SELECT id FROM queries WHERE name = 'fin_monthly_totals'), '{"formats": {"spend": "currency", "deposits": "currency", "net": "currency", "txn_count": "number"}}');
 
 -- categories
-INSERT INTO dashboards (slug, title, description, layout, is_active) VALUES ('categories', 'Categories', 'Pick a category (bucket or leaf) and a year (or ?category=...&year=...). Year-scoped spend with YoY, monthly spend (bars open Transactions), top payees, transactions, all buckets (rows drill in). Default = top-spend bucket + latest year.', '{"param_nav": [{"param": "category", "label": "Category", "all_label": "Top-spend category (default)", "query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}, {"param": "year", "label": "Year", "all_label": "Latest year (default)", "query": "SELECT CAST(YEAR(txn_date) AS CHAR) y FROM transactions GROUP BY y ORDER BY y DESC"}]}', 1);
+INSERT INTO dashboards (slug, title, description, layout, section, sort_order, is_active) VALUES ('categories', 'Categories', 'Pick a category (bucket or leaf) and a year (or ?category=...&year=...). Year-scoped spend with YoY, monthly spend (bars open Transactions), top payees, transactions, all buckets (rows drill in). Default = top-spend bucket + latest year.', '{"param_nav": [{"param": "category", "label": "Category", "all_label": "Top-spend category (default)", "query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}, {"param": "year", "label": "Year", "all_label": "Latest year (default)", "query": "SELECT CAST(YEAR(txn_date) AS CHAR) y FROM transactions GROUP BY y ORDER BY y DESC"}]}', 'finance', 20, 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES
@@ -492,7 +492,7 @@ VALUES
 
 
 -- kids
-INSERT INTO dashboards (slug, title, description, is_active) VALUES ('kids', 'Kid costs', 'Kid costs = transactions in the Kids and Education buckets (activities, toys, daycare, tuition, school fees, test prep). Kid spend, share of total spend, and year-over-year trend.', 1);
+INSERT INTO dashboards (slug, title, description, section, sort_order, is_active) VALUES ('kids', 'Kid costs', 'Kid costs = transactions in the Kids and Education buckets (activities, toys, daycare, tuition, school fees, test prep). Kid spend, share of total spend, and year-over-year trend.', 'finance', 40, 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES
@@ -505,7 +505,7 @@ VALUES
   ((SELECT id FROM dashboards WHERE slug = 'kids'), 7, 'table', 'Recent kid transactions (12mo)', (SELECT id FROM queries WHERE name = 'fin_kid_recent_txns_12mo'), '{"formats": {"date": "date", "amount": "currency"}, "page_size": 250}');
 
 -- tax-savings
-INSERT INTO dashboards (slug, title, description, is_active) VALUES ('tax-savings', 'Tax & savings', 'Income, income tax paid, estimated savings, and savings rate per tax year (from finance.tax_years), with prior-year deltas and charts.', 1);
+INSERT INTO dashboards (slug, title, description, section, sort_order, is_active) VALUES ('tax-savings', 'Tax & savings', 'Income, income tax paid, estimated savings, and savings rate per tax year (from finance.tax_years), with prior-year deltas and charts.', 'finance', 50, 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES
@@ -518,7 +518,7 @@ VALUES
   ((SELECT id FROM dashboards WHERE slug = 'tax-savings'), 7, 'table', 'All tax years', (SELECT id FROM queries WHERE name = 'fin_tax_all_years'), '{"formats": {"income": "currency", "tax_paid": "currency", "est_savings": "currency", "rate": "percent"}}');
 
 -- data-health
-INSERT INTO dashboards (slug, title, description, is_active) VALUES ('data-health', 'Data health', 'Pipeline and data quality: ingest history, uncategorized counts, pending category suggestions, and per-bucket MoM/YoY spend watch with ALERT flags (|change| > 30%).', 1);
+INSERT INTO dashboards (slug, title, description, section, sort_order, is_active) VALUES ('data-health', 'Data health', 'Pipeline and data quality: ingest history, uncategorized counts, pending category suggestions, and per-bucket MoM/YoY spend watch with ALERT flags (|change| > 30%).', 'finance', 70, 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES

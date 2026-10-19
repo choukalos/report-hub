@@ -91,7 +91,7 @@ ORDER BY day, so', NULL, 'Demo dataset long format: one row per day/series (seri
 
 -- 3) datahub dashboard + cards
 
-INSERT INTO dashboards (slug, title, description, layout, is_active) VALUES ('datahub', 'Data Hub', 'The v2 generic-dataset pipeline: what''s registered (hub.datasets) and what''s been ingested (hub.load_log). Per-dataset dashboards (like Demo Weather) are generated per dataset — see the report-hub README.', NULL, 1);
+INSERT INTO dashboards (slug, title, description, layout, section, sort_order, is_active) VALUES ('datahub', 'Data Hub', 'The v2 generic-dataset pipeline: what''s registered (hub.datasets) and what''s been ingested (hub.load_log). Per-dataset dashboards (like Demo Weather) are generated per dataset — see the report-hub README.', NULL, 'datahub', 10, 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES
@@ -103,7 +103,7 @@ VALUES
 
 -- 4) demo-weather dashboard + cards
 
-INSERT INTO dashboards (slug, title, description, layout, is_active) VALUES ('demo-weather', 'Demo Weather (hub dataset)', 'v3 demo: a report-hub dashboard over a hub generic dataset (hub.ds_demo-weather — 14 sample daily readings; demo data, not a real sensor). Pattern: register the dataset in data-hub, drop CSVs into the inbox, generate a dashboard like this one.', NULL, 1);
+INSERT INTO dashboards (slug, title, description, layout, section, sort_order, is_active) VALUES ('demo-weather', 'Demo Weather (hub dataset)', 'v3 demo: a report-hub dashboard over a hub generic dataset (hub.ds_demo-weather — 14 sample daily readings; demo data, not a real sensor). Pattern: register the dataset in data-hub, drop CSVs into the inbox, generate a dashboard like this one.', NULL, 'demo', 10, 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES

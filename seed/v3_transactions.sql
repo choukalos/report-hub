@@ -88,7 +88,7 @@ ORDER BY t.txn_date DESC, t.id DESC', '{"category": "Food & Dining", "month": "2
 
 -- 3) dashboard + cards
 
-INSERT INTO dashboards (slug, title, description, layout, is_active) VALUES ('transactions', 'Transactions', 'All transactions for a category in a month (or ?category=...&month=...). Drill-down target from the Categories monthly-spend chart. Pickers: category (bucket or leaf) + month. Default = top-spend category + latest month.', '{"param_nav": [{"param": "category", "label": "Category", "all_label": "Top-spend category (default)", "query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}, {"param": "month", "label": "Month", "all_label": "Latest month (default)", "query": "SELECT DATE_FORMAT(txn_date, ''%Y-%m'') ym FROM transactions GROUP BY ym ORDER BY ym DESC"}]}', 1);
+INSERT INTO dashboards (slug, title, description, layout, section, sort_order, is_active) VALUES ('transactions', 'Transactions', 'All transactions for a category in a month (or ?category=...&month=...). Drill-down target from the Categories monthly-spend chart. Pickers: category (bucket or leaf) + month. Default = top-spend category + latest month.', '{"param_nav": [{"param": "category", "label": "Category", "all_label": "Top-spend category (default)", "query": "SELECT name FROM categories WHERE parent_id = 0 ORDER BY name"}, {"param": "month", "label": "Month", "all_label": "Latest month (default)", "query": "SELECT DATE_FORMAT(txn_date, ''%Y-%m'') ym FROM transactions GROUP BY ym ORDER BY ym DESC"}]}', 'finance', 60, 1);
 
 INSERT INTO cards (dashboard_id, position, type, title, query_id, config)
 VALUES
