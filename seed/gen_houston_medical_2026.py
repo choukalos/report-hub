@@ -132,9 +132,8 @@ QUERIES = {
     "hou_trip_excluded": (
         "SELECT t.txn_date date, t.payee, t.description,\n"
         "       CASE\n"
-        "         WHEN t.payee IN ('Allegiant Airlines', 'Delta Airlines', 'Delta') THEN 'Flight (destination not in data - possibly trip-related)'\n"
-        "         WHEN t.description REGEXP 'BASTROP|WALLER|SEALY' THEN 'Gas en route (I-10 corridor, ambiguous)'\n"
-        "         WHEN t.description LIKE 'HEB CURBSIDE 800-432-3113%' THEN 'H-E-B curbside (no store location in data)'\n"
+        "         WHEN t.payee IN ('Allegiant Airlines', 'Delta Airlines', 'Delta') THEN 'Flight (not part of trip - confirmed 2026-11-23)'\n"
+        "         WHEN t.description LIKE 'HEB CURBSIDE 800-432-3113%' THEN 'H-E-B curbside (normal weekend/Bella groceries - not trip, confirmed 2026-11-23)'\n"
         "         WHEN t.description LIKE '%MD Anderson bills%' THEN 'MD Anderson funding transfer (not spend)'\n"
         "       END note,\n"
         "       -t.amount_cents amount\n"
@@ -144,13 +143,12 @@ QUERIES = {
         "  AND t.amount_cents < 0\n"
         "  AND (\n"
         "        t.payee IN ('Allegiant Airlines', 'Delta Airlines', 'Delta')\n"
-        "     OR (t.description REGEXP 'BASTROP|WALLER|SEALY' AND c.name = 'Gas')\n"
         "     OR (t.description LIKE 'HEB CURBSIDE 800-432-3113%' AND t.txn_date >= '2026-10-01')\n"
         "     OR (t.description LIKE '%MD Anderson bills%' AND c.bucket = 'Transfer')\n"
         "  )\n"
         "  AND NOT EXISTS (SELECT 1 FROM trip_transactions tt WHERE tt.transaction_id = t.id)\n"
         "ORDER BY t.txn_date",
-        "Ambiguous trip-window items NOT tagged (flights, en-route gas, location-less curbside, MD Anderson funding transfer) - review list",
+        "Excluded trip-window items (flights, curbside groceries, MD Anderson funding transfer) - confirmed not trip spend 2026-11-23",
     ),
 }
 
@@ -159,7 +157,9 @@ QUERIES = {
 NOTES_TEXT = (
     "Window 2026-07-15 to 2026-12-17 (final audiology follow-up). Tagged = spend (debits) matching any rule: "
     "Houston-metro merchant location (Houston, Katy, La Grange, Cypress, Brookshire + other metro cities), "
-    "MD Anderson payees (MDACC / MyChart / pharmacy), Airbnb, Harris County EZ-Tag tolls. "
+    "MD Anderson payees (MDACC / MyChart / pharmacy), Airbnb, Harris County EZ-Tag tolls, "
+    "Buc-ee's/Shell gas & food stops (any store/location - I-10 corridor included). "
+    "Flights (Allegiant/Delta) and HEB curbside are normal spend, not trip (chuck 2026-11-23). "
     "Home (Round Rock/Austin) spending stays out. Airbnb: two bookings Oct 25 - Nov 7 and Nov 8 - Dec 11 "
     "(~$11k total per the family; the dog held the Saturday checkout). Bill 1 ($8,622.18, charged Oct 20) is in the data; "
     "bill 2 lands in the next export. Data through 2026-11-13 - re-run scripts/trips/tag_houston_medical_2026.sql "
@@ -214,7 +214,7 @@ CARDS = [
       "option": pie_option}),
     (9, "table", "All tagged transactions", "hou_trip_txns",
      {"formats": {"date": "date", "amount": "currency"}, "page_size": 250}),
-    (10, "table", "Excluded - ambiguous (review)", "hou_trip_excluded",
+    (10, "table", "Excluded - not trip spend (review)", "hou_trip_excluded",
      {"formats": {"date": "date", "amount": "currency"}, "page_size": 250}),
 ]
 
