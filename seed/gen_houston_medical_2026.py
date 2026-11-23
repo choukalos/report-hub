@@ -25,7 +25,7 @@ def cfg(obj) -> str:
 # ---------------------------------------------------------------- queries
 
 GROUP_CASE = """CASE
-      WHEN t.description LIKE '%AIRBNB%' OR (t.description LIKE '%MARRIOTT%' AND t.description LIKE '%HOUSTON%') THEN 'Lodging (Airbnb / Marriott)'
+      WHEN t.description LIKE '%AIRBNB%' OR (t.description LIKE '%MARRIOTT%' AND t.description LIKE '%HOUSTON%') OR t.description LIKE '%TURBOTENANT%' THEN 'Lodging (Airbnb / Marriott)'
       WHEN t.description LIKE '%MYCHART%' OR t.description LIKE '%MDACC PHARMACY%' THEN 'Medical (MD Anderson)'
       WHEN t.payee LIKE '%Harris County Toll%' OR t.payee IN ('Shell', 'Phillips 66') OR c.name = 'Gas' OR (c.name = 'Auto & Transport' AND t.description REGEXP 'GAS/CARWASH') THEN 'Gas & tolls'
       WHEN c.name IN ('Restaurants', 'Fast Food', 'Coffee Shops', 'Food & Dining', 'Alcohol & Bars') THEN 'Dining out'
@@ -38,6 +38,19 @@ GROUP_ORDER = """FIELD(grp, 'Lodging (Airbnb / Marriott)', 'Medical (MD Anderson
 
 JOIN_TRIP = """JOIN trip_transactions tt ON tt.transaction_id = t.id
 JOIN trips tr ON tr.id = tt.trip_id AND tr.slug = 'houston-medical-2026'"""
+
+# Distinct group values (first column) — feeds the dashboard's Group picker
+# (layout.param_nav) and the transactions card's allowed_query validation.
+GROUP_LIST_QUERY = (
+    f"SELECT DISTINCT grp FROM (\n"
+    f"  SELECT {GROUP_CASE} grp\n"
+    f"  FROM transactions t\n"
+    f"  LEFT JOIN categories c ON c.id = t.category_id\n"
+    f"  {JOIN_TRIP}\n"
+    f"  WHERE t.amount_cents < 0\n"
+    f") g\n"
+    f"ORDER BY {GROUP_ORDER}"
+)
 
 QUERIES = {
     "hou_trip_total": (
@@ -118,16 +131,21 @@ QUERIES = {
         "Tagged trip spend by group, dollars (pie)",
     ),
     "hou_trip_txns": (
-        f"SELECT t.txn_date date, t.payee, t.description,\n"
-        f"       {GROUP_CASE} group_name,\n"
-        f"       tt.tag_reason,\n"
-        f"       -t.amount_cents amount\n"
-        f"FROM transactions t\n"
-        f"LEFT JOIN categories c ON c.id = t.category_id\n"
+        f"SELECT date, payee, description, group_name, tag_reason, amount\n"
+        f"FROM (\n"
+        f"  SELECT t.txn_date date, t.payee, t.description,\n"
+        f"         {GROUP_CASE} group_name,\n"
+        f"         tt.tag_reason,\n"
+        f"         -t.amount_cents amount,\n"
+        f"         t.id tid\n"
+        f"  FROM transactions t\n"
+        f"  LEFT JOIN categories c ON c.id = t.category_id\n"
         f"{JOIN_TRIP}\n"
-        f"WHERE t.amount_cents < 0\n"
-        f"ORDER BY t.txn_date DESC, t.id DESC",
-        "All tagged Houston Medical 2026 transactions (newest first)",
+        f"  WHERE t.amount_cents < 0\n"
+        f") x\n"
+        f"WHERE group_name = :group OR :group = 'All'\n"
+        f"ORDER BY date DESC, tid DESC",
+        "All tagged Houston Medical 2026 transactions (newest first); :group filters by spend group ('All' = no filter)",
     ),
     "hou_trip_excluded": (
         "SELECT t.txn_date date, t.payee, t.description,\n"
@@ -162,7 +180,9 @@ NOTES_TEXT = (
     "Flights (Allegiant/Delta) and HEB curbside are normal spend, not trip (chuck 2026-11-23). "
     "Home (Round Rock/Austin) spending stays out. Airbnb: two bookings Oct 25 - Nov 7 and Nov 8 - Dec 11 "
     "(~$11k total per the family; the dog held the Saturday checkout). Bill 1 ($8,622.18, charged Oct 20) is in the data; "
-    "bill 2 lands in the next export. Data through 2026-11-13 - re-run scripts/trips/tag_houston_medical_2026.sql "
+    "bill 2 lands in the next export. The 'All tagged transactions' table has a Group picker above the page "
+    "(All groups / Lodging / Dining out / ...) for quick per-type review. "
+    "Data through 2026-11-13 - re-run scripts/trips/tag_houston_medical_2026.sql "
     "(data-hub repo) after each ingest to pick up new rows."
 )
 
@@ -170,6 +190,19 @@ DASH_DESC = (
     "Expenses tagged to the 2026 Houston medical stay (MD Anderson treatment; home base Round Rock, TX), kept "
     "separate from normal spending. Data through 2026-11-13 - re-run the tag script after each ingest. Rules: see notes card."
 )
+
+# Dashboard layout: the Group picker filters the 'All tagged transactions'
+# table (cards that don't declare :group are unaffected by the param).
+LAYOUT = {
+    "param_nav": [
+        {
+            "param": "group",
+            "label": "Transactions group",
+            "all_label": "All groups",
+            "query": GROUP_LIST_QUERY,
+        }
+    ]
+}
 
 monthly_option = {
     "tooltip": {"trigger": "axis"},
@@ -213,7 +246,8 @@ CARDS = [
       "data_map": {"x": "grp", "value": "amount"},
       "option": pie_option}),
     (9, "table", "All tagged transactions", "hou_trip_txns",
-     {"formats": {"date": "date", "amount": "currency"}, "page_size": 250}),
+     {"formats": {"date": "date", "amount": "currency"}, "page_size": 250,
+      "params": {"group": {"default": "All", "allowed_query": GROUP_LIST_QUERY}}}),
     (10, "table", "Excluded - not trip spend (review)", "hou_trip_excluded",
      {"formats": {"date": "date", "amount": "currency"}, "page_size": 250}),
 ]
@@ -224,7 +258,6 @@ CARDS = [
 assert len(DASH_DESC) <= 255, f"DASH_DESC too long: {len(DASH_DESC)}"
 for _n, (_s, _d) in QUERIES.items():
     assert len(_d) <= 255, f"query description too long ({len(_d)}): {_n}"
-
 lines = []
 lines.append("-- ============================================================")
 lines.append("-- Houston Medical 2026 dashboard seed (report-hub)")
@@ -257,7 +290,7 @@ for name, (sql, desc) in QUERIES.items():
     lines.append(f"INSERT INTO queries (name, sql_text, params, description) VALUES ({q(name)}, {q(sql)}, NULL, {q(desc)});")
 lines.append("")
 lines.append("-- 2) dashboard")
-lines.append(f"INSERT INTO dashboards (slug, title, description, section, sort_order, is_active) VALUES ({q(SLUG)}, {q('Houston Medical 2026')}, {q(DASH_DESC)}, {q('finance')}, 80, 1);")
+lines.append(f"INSERT INTO dashboards (slug, title, description, section, sort_order, is_active, layout) VALUES ({q(SLUG)}, {q('Houston Medical 2026')}, {q(DASH_DESC)}, {q('finance')}, 80, 1, {cfg(LAYOUT)});")
 lines.append("")
 lines.append("-- 3) cards")
 vals = []
